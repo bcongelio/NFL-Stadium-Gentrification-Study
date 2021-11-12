@@ -1,0 +1,629 @@
+####################
+## LOADING REQUIRED LIBRARIES
+####################
+
+library(tidyverse)
+library(tigris)
+library(tidycensus)
+library(sf)
+library(broom)
+library(viridis)
+library(janitor)
+library(scales)
+library(ggthemes)
+library(mapboxapi)
+library(cluster)
+library(factoextra)
+library(httr)
+library(stringr)
+library(magrittr)
+
+####################
+## SETTING CACHE OPTIONS FOR TIGRIS TO IMPROVE CPU PERFORMANCE
+####################
+
+options(tigris_use_cache = TRUE)
+
+####################
+## PROVIDING API TO CONNECT TO CENSUS INFO AND TO MAPBOX API
+####################
+
+census_api_key("1a47c66da9f6c0239edead6eebbf3bceafcf6dca", overwrite = TRUE) ##FOR TIDYCENSUS
+readRenviron("~/.Renviron")
+
+my_token <- "pk.eyJ1IjoiYmNvbmdlbGlvIiwiYSI6ImNrdDNxZ2w2ODBhYmYydW5xZGg4OWJiNzkifQ.VwsWe9ZNilYhBXd3hA0vlQ"
+mb_access_token(my_token, install = TRUE) ##FOR MAPBOX API
+Sys.getenv("MAPBOX_PUBLIC_TOKEN")
+
+
+####################
+## STADIUM INFORMATION SO I DON'T FORGET & ACS STUFF FOR REFERENCE
+####################
+
+## 1. Allegiant Stadium (Paradise, Nevada - 2020)  
+## 2. SoFi Stadium (Inglewood, California - 2020)   
+## 3. Mercedes-Benz Stadium (Atlanta, Georgia - 2017)  
+## 4. U.S. Bank Stadium (Minneapolis, Minnesota - 2016)   
+## 5. Levi's Stadium (Santa Clara, California - 2014)  
+## 6. MetLife Stadium (East Rutherford, New Jersey - 2010) 
+## 7. AT&T Stadium (Arlington, Texas - 2009)
+## 8. Lucas Oil Stadium (Indianapolis, Indiana - 2008) 
+
+#####IMPORTANT: DO NOT OVERLAP THESE WHEN COMPARING####
+## ACS 2005 - 2009
+## ACS 2006 - 2010
+## ACS 2007 - 2011
+## ACS 2008 - 2012
+## ACS 2009 - 2013
+## ACS 2010 - 2014
+## ACS 2011 - 2015
+## ACS 2012 - 2016
+## ACS 2005 - 2009
+## ACS 2013 - 2017
+## ACS 2014 - 2018
+## ACS 2015 - 2019
+
+
+####################
+## GRABBING AND LOADING THE VARIABLES FOR THE ACS
+####################
+
+variables <- load_variables(2009, "acs5", cache = TRUE)
+View(variables)
+
+####################
+## SETTING UP VARIABLES FOR 2009 ACS5
+####################
+
+race_demographic <- c(
+  white = "B02001_002",
+  black = "B02001_003",
+  asian = "B02001_005",
+  hispanic = "B03001_003"
+)
+
+housing_numbers <- c(
+  units_loan = "B25081_007",
+  units_owned = "B25081_008",
+  units_rented = "B25003_003"
+)
+
+rent_to_income <- c(
+  median.rent = "B25064_001",
+  median.income = "B19013_001"
+)
+
+mortgage_to_income <- c(
+  mortgage.ratio = "B25092_002"
+)
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - PARADISE, NEVADA
+####################
+
+####LAS VEGAS RAIDERS --- RACE DEMOGRAPHICS
+paradise.nevada.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "NV",
+  county = "Clark",
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B02001_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####LAS VEGAS RAIDERS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+nevada.cities <- get_acs(
+  geography = "place",
+  state = "NV",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2019,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" CDP, Nevada")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.race <- paradise.nevada.race %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+paradise.nevada.race <- paradise.nevada.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####LAS VEGAS RAIDERS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+paradise.nevada.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "NV", 
+  county = "Clark",
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B25003_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.housing <- paradise.nevada.housing %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+paradise.nevada.housing <- paradise.nevada.housing %>%
+  st_drop_geometry()
+
+##################
+##################
+
+####LAS VEGAS RAIDERS --- RENT TO INCOME RATIO
+paradise.nevada.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "NV", 
+  county = "Clark",
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = median.rentE / (median.incomeE / 12))
+
+paradise.nevada.rentincome$rent.ratio[is.na(paradise.nevada.rentincome$rent.ratio)] <- 
+  mean(paradise.nevada.rentincome$rent.ratio, na.rm = TRUE)
+
+paradise.nevada.rentincome <- paradise.nevada.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.rentincome <- paradise.nevada.rentincome %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+paradise.nevada.rentincome <- paradise.nevada.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####LAS VEGAS RAIDERS --- MORTGAGE TO INCOME RATIO
+paradise.nevada.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "NV", 
+  county = "Clark",
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID)
+
+paradise.nevada.mortgageratio$mortgage.ratioE[is.na(paradise.nevada.mortgageratio$mortgage.ratioE)] <- 
+  mean(paradise.nevada.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+paradise.nevada.mortgageratio <- paradise.nevada.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.mortgageratio <- paradise.nevada.mortgageratio %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+paradise.nevada.mortgageratio <- paradise.nevada.mortgageratio %>%
+  st_drop_geometry()
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+paradise.nevada.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "NV",
+  county = "Clark",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####LAS VEGAS RAIDERS --- JOINING THE DATAFRAMES INTO ONE
+paradise.nevada <- paradise.nevada.geo %>%
+  left_join(paradise.nevada.housing) %>%
+  left_join(paradise.nevada.race) %>%
+  left_join(paradise.nevada.rentincome) %>%
+  left_join(paradise.nevada.mortgageratio) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Paradise")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+allegiant.stadium.distance <- mb_geocode("Allegiant Stadium, Paradise NV")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_allegiant <- mb_matrix(paradise.nevada, allegiant.stadium.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+paradise.nevada$distance.to.stadium <- as.numeric(minutes_to_allegiant)
+
+
+
+
+
+
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - INGLEWOOD, CALIFORNIA
+####################
+
+####LOS ANGELES RAMS --- RACE DEMOGRAPHICS
+inglewood.cali.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "CA",
+  county = "Los Angeles",
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B02001_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####LAS VEGAS RAIDERS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+cali.cities <- get_acs(
+  geography = "place",
+  state = "CA",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2019,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, California")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+inglewood.cali.race <- inglewood.cali.race %>%
+  st_join(cali.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Inglewood") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+inglewood.cali.race <- inglewood.cali.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####LOS ANGELES RAMS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+inglewood.cali.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "CA", 
+  county = "Los Angeles",
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B25003_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+inglewood.cali.housing <- inglewood.cali.housing %>%
+  st_join(cali.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Inglewood") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+inglewood.cali.housing <- inglewood.cali.housing %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####LOS ANGELES RAMS --- RENT TO INCOME RATIO
+inglewood.cali.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "CA", 
+  county = "Los Angeles",
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = median.rentE / (median.incomeE / 12))
+
+inglewood.cali.rentincome$rent.ratio[is.na(inglewood.cali.rentincome$rent.ratio)] <- 
+  mean(inglewood.cali.rentincome$rent.ratio, na.rm = TRUE)
+
+inglewood.cali.rentincome <- inglewood.cali.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+inglewood.cali.rentincome <- inglewood.cali.rentincome %>%
+  st_join(cali.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Inglewood") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+inglewood.cali.rentincome <- inglewood.cali.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####LOS ANGELES RAMS --- MORTGAGE TO INCOME RATIO
+inglewood.cali.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "CA", 
+  county = "Los Angeles",
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID)
+
+inglewood.cali.mortgageratio$mortgage.ratioE[is.na(inglewood.cali.mortgageratio$mortgage.ratioE)] <- 
+  mean(inglewood.cali.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+inglewood.cali.mortgageratio <- inglewood.cali.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+inglewood.cali.mortgageratio <- inglewood.cali.mortgageratio %>%
+  st_join(cali.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Inglewood") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+inglewood.cali.mortgageratio <- inglewood.cali.mortgageratio %>%
+  st_drop_geometry()
+
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+inglewood.cali.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "CA",
+  county = "Los Angeles",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####LOS ANGELES RAMS --- JOINING THE DATAFRAMES INTO ONE
+inglewood.cali <- inglewood.cali.geo %>%
+  left_join(inglewood.cali.housing) %>%
+  left_join(inglewood.cali.race) %>%
+  left_join(inglewood.cali.rentincome) %>%
+  left_join(inglewood.cali.mortgageratio) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Inglewood")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+sofi.stadium.distance <- mb_geocode("SoFi Stadium, Inglewood CA")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_sofi <- mb_matrix(inglewood.cali, sofi.stadium.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+inglewood.cali$distance.to.stadium <- as.numeric(minutes_to_sofi)
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - Arlington Heights, ILL
+####################
+
+
+###UH OH - ARLINGTON HEIGHTS, ILL IS WITHIN TWO COUNTIES. MUST PASS A VECTOR.
+two.counties <- c("Cook", "Lake")
+
+####CHICAGO BEARS --- RACE DEMOGRAPHICS
+arlington.heights.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "IL",
+  county = two.counties,
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B02001_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####CHICAGO BEARS--- GATHERING CITIES TO MERGE TRACTS WITH DATA
+ill.cities <- get_acs(
+  geography = "place",
+  state = "IL",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2019,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, Illinois"))) %>%
+  transmute(urban_name = str_remove(urban_name,
+                                    fixed(" village, Illinois")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+arlington.heights.race <- arlington.heights.race %>%
+  st_join(ill.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Arlington Heights") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+arlington.heights.race <- arlington.heights.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####CHICAGO BEARS--- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+arlington.heights.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "IL", 
+  county = two.counties,
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B25003_001") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = estimate / summary_est) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+arlington.heights.housing <- arlington.heights.housing %>%
+  st_join(ill.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Arlington Heights") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+arlington.heights.housing <- arlington.heights.housing %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####CHICAGO BEARS --- RENT TO INCOME RATIO
+arlington.heights.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "IL", 
+  county = two.counties,
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = median.rentE / (median.incomeE / 12))
+
+arlington.heights.rentincome$rent.ratio[is.na(arlington.heights.rentincome$rent.ratio)] <- 
+  mean(arlington.heights.rentincome$rent.ratio, na.rm = TRUE)
+
+arlington.heights.rentincome <- arlington.heights.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+arlington.heights.rentincome <- arlington.heights.rentincome %>%
+  st_join(ill.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Arlington Heights") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+arlington.heights.rentincome <- arlington.heights.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####CHICAGO BEARS --- MORTGAGE TO INCOME RATIO
+arlington.heights.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "IL", 
+  county = two.counties,
+  year = 2019,
+  geometry = TRUE,
+  output = "wide") %>%
+  arrange(GEOID)
+
+arlington.heights.mortgageratio$mortgage.ratioE[is.na(arlington.heights.mortgageratio$mortgage.ratioE)] <- 
+  mean(arlington.heights.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
+  st_join(ill.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Arlington Heights") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
+  st_drop_geometry()
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+arlington.heights.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "IL",
+  county = two.counties,
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####LOS ANGELES RAMS --- JOINING THE DATAFRAMES INTO ONE
+arlington.heights <- arlington.heights.geo %>%
+  left_join(arlington.heights.housing) %>%
+  left_join(arlington.heights.race) %>%
+  left_join(arlington.heights.rentincome) %>%
+  left_join(arlington.heights.mortgageratio) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Arlington Heights")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+bears.stadium.distance <- mb_geocode("Arlington International Racecourse, Arlington Heights IL")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_bears <- mb_matrix(arlington.heights, bears.stadium.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+arlington.heights$distance.to.stadium <- as.numeric(minutes_to_bears)
+
+
+
+
+####################
+## GROUPING ALL CITIES TOGETHER
+####################
+
+kmeans.data <- rbind(arlington.heights,
+                     inglewood.cali,
+                     paradise.nevada)
