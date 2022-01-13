@@ -17,6 +17,9 @@ library(factoextra)
 library(httr)
 library(stringr)
 library(magrittr)
+library(data.table)
+library(geosphere)
+library(lubridate)
 
 ####################
 ## SETTING CACHE OPTIONS FOR TIGRIS TO IMPROVE CPU PERFORMANCE
@@ -40,28 +43,16 @@ Sys.getenv("MAPBOX_PUBLIC_TOKEN")
 ## STADIUM INFORMATION SO I DON'T FORGET & ACS STUFF FOR REFERENCE
 ####################
 
-## 1. Allegiant Stadium (Paradise, Nevada - 2020)  
-## 2. SoFi Stadium (Inglewood, California - 2020)   
-## 3. Mercedes-Benz Stadium (Atlanta, Georgia - 2017)  
-## 4. U.S. Bank Stadium (Minneapolis, Minnesota - 2016)   
-## 5. Levi's Stadium (Santa Clara, California - 2014)  
-## 6. MetLife Stadium (East Rutherford, New Jersey - 2010) 
-## 7. AT&T Stadium (Arlington, Texas - 2009)
-## 8. Lucas Oil Stadium (Indianapolis, Indiana - 2008) 
+## 1. Allegiant Stadium (Paradise, Nevada - 2020) S: 2017   E: 2019 
+## 2. SoFi Stadium (Inglewood, California - 2020) S: 2016   E: 2019  
+## 3. Mercedes-Benz Stadium (Atlanta, Georgia - 2017) S: 2013   E: 2017  
+## 4. U.S. Bank Stadium (Minneapolis, Minnesota - 2016) S: 2013  E: 2016  
+## 5. Levi's Stadium (Santa Clara, California - 2014)  S: 2012  E: 2014
+## 6. MetLife Stadium (East Rutherford, New Jersey - 2010) S: 2007   E: 2010
+## 7. AT&T Stadium (Arlington, Texas - 2009) S: 2005  E: 2009
+## 8. Lucas Oil Stadium (Indianapolis, Indiana - 2008) S: 2005  E: 2008
 
-#####IMPORTANT: DO NOT OVERLAP THESE WHEN COMPARING####
-## ACS 2005 - 2009
-## ACS 2006 - 2010
-## ACS 2007 - 2011
-## ACS 2008 - 2012
-## ACS 2009 - 2013
-## ACS 2010 - 2014
-## ACS 2011 - 2015
-## ACS 2012 - 2016
-## ACS 2005 - 2009
-## ACS 2013 - 2017
-## ACS 2014 - 2018
-## ACS 2015 - 2019
+## 9. Proposed Chicago Bears Stadium (Arlington Heights, Illinois) S: 2019
 
 
 ####################
@@ -72,25 +63,30 @@ variables <- load_variables(2009, "acs5", cache = TRUE)
 View(variables)
 
 ####################
-## SETTING UP VARIABLES FOR 2009 ACS5
+## SETTING UP VARIABLES ACS5 - **NOTE: these are edited for each year, as variables are changed by US Cenus
 ####################
 
+##EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER - MASTER'S DEGREE
+educational_attainment <- c(
+  graduate.degree = "B15003_023"
+)
+
 race_demographic <- c(
-  white = "B02001_002",
-  black = "B02001_003",
-  asian = "B02001_005",
-  hispanic = "B03001_003"
+  white = "C02003_003",
+  black = "C02003_004",
+  asian = "C02003_006",
+  hispanic = "B03002_012"
 )
 
 housing_numbers <- c(
-  units_loan = "B25081_007",
+  units_loan = "B25081_002",
   units_owned = "B25081_008",
-  units_rented = "B25003_003"
+  units_rented = "B25003_003"  ##search is "Renter Occupied"
 )
 
 rent_to_income <- c(
-  median.rent = "B25064_001",
-  median.income = "B19013_001"
+  median.rent = "B25064_001",  ##search is "Median gross rent"
+  median.income = "B19013_001" ##search s "Median household income in the past 12 months"
 )
 
 mortgage_to_income <- c(
@@ -107,11 +103,12 @@ paradise.nevada.race <- get_acs(
   variables = race_demographic,
   state = "NV",
   county = "Clark",
-  year = 2019,
+  year = 2017,
   geometry = TRUE,
-  summary_var = "B02001_001") %>%
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(estimate = estimate / summary_est) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
   select(-c(summary_est, moe, summary_moe))
 
 ####LAS VEGAS RAIDERS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
@@ -120,7 +117,7 @@ nevada.cities <- get_acs(
   state = "NV",
   variables = "B01001_001",
   geometry = TRUE,
-  year = 2019,
+  year = 2017,
   survey = "acs1"
 ) %>%
   transmute(urban_name = str_remove(NAME, 
@@ -149,11 +146,12 @@ paradise.nevada.housing <- get_acs(
   variables = housing_numbers,
   state = "NV", 
   county = "Clark",
-  year = 2019,
+  year = 2017,
   geometry = TRUE,
-  summary_var = "B25003_001") %>%
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(estimate = estimate / summary_est) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
   select(-c(summary_est, moe, summary_moe))
 
 ####JOINING TO COMBINED TRACTS TO DATA
@@ -177,11 +175,12 @@ paradise.nevada.rentincome <- get_acs(
   variables = rent_to_income,
   state = "NV", 
   county = "Clark",
-  year = 2019,
+  year = 2017,
   geometry = TRUE,
-  output = "wide") %>%
+  output = "wide",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(rent.ratio = median.rentE / (median.incomeE / 12))
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
 
 paradise.nevada.rentincome$rent.ratio[is.na(paradise.nevada.rentincome$rent.ratio)] <- 
   mean(paradise.nevada.rentincome$rent.ratio, na.rm = TRUE)
@@ -210,9 +209,10 @@ paradise.nevada.mortgageratio <- get_acs(
   variables = mortgage_to_income,
   state = "NV", 
   county = "Clark",
-  year = 2019,
+  year = 2017,
   geometry = TRUE,
-  output = "wide") %>%
+  output = "wide",
+  survey = "acs5") %>%
   arrange(GEOID)
 
 paradise.nevada.mortgageratio$mortgage.ratioE[is.na(paradise.nevada.mortgageratio$mortgage.ratioE)] <- 
@@ -231,6 +231,61 @@ paradise.nevada.mortgageratio <- paradise.nevada.mortgageratio %>%
 ####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
 paradise.nevada.mortgageratio <- paradise.nevada.mortgageratio %>%
   st_drop_geometry()
+
+
+
+##################
+##################
+
+####LAS VEGAS RAIDERS --- EDUCATIONAL ATTAINMENT
+paradise.nevada.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "NV",
+  county = "Clark",
+  year = 2017,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####LAS VEGAS RAIDERS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+nevada.cities <- get_acs(
+  geography = "place",
+  state = "NV",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2017,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" CDP, Nevada")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.education <- paradise.nevada.education %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+paradise.nevada.education <- paradise.nevada.education %>%
+  st_join(nevada.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Paradise") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+paradise.nevada.education <- paradise.nevada.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+paradise.nevada.education <- paradise.nevada.education %>%
+  st_drop_geometry()
+
 
 ####################
 ## MERGING THE DIFFERENT DATAFRAMES
@@ -251,6 +306,7 @@ paradise.nevada <- paradise.nevada.geo %>%
   left_join(paradise.nevada.race) %>%
   left_join(paradise.nevada.rentincome) %>%
   left_join(paradise.nevada.mortgageratio) %>%
+  left_join(paradise.nevada.education) %>%
   mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
   filter(urban_name == "Paradise")
 
@@ -267,11 +323,6 @@ paradise.nevada$distance.to.stadium <- as.numeric(minutes_to_allegiant)
 
 
 
-
-
-
-
-
 ####################
 ## LET'S GET TO WORK ... PULLING CENSUS DATA - INGLEWOOD, CALIFORNIA
 ####################
@@ -282,7 +333,7 @@ inglewood.cali.race <- get_acs(
   variables = race_demographic,
   state = "CA",
   county = "Los Angeles",
-  year = 2019,
+  year = 2016,
   geometry = TRUE,
   summary_var = "B02001_001") %>%
   arrange(GEOID) %>%
@@ -295,7 +346,7 @@ cali.cities <- get_acs(
   state = "CA",
   variables = "B01001_001",
   geometry = TRUE,
-  year = 2019,
+  year = 2016,
   survey = "acs1"
 ) %>%
   transmute(urban_name = str_remove(NAME, 
@@ -324,7 +375,7 @@ inglewood.cali.housing <- get_acs(
   variables = housing_numbers,
   state = "CA", 
   county = "Los Angeles",
-  year = 2019,
+  year = 2016,
   geometry = TRUE,
   summary_var = "B25003_001") %>%
   arrange(GEOID) %>%
@@ -353,7 +404,7 @@ inglewood.cali.rentincome <- get_acs(
   variables = rent_to_income,
   state = "CA", 
   county = "Los Angeles",
-  year = 2019,
+  year = 2016,
   geometry = TRUE,
   output = "wide") %>%
   arrange(GEOID) %>%
@@ -386,7 +437,7 @@ inglewood.cali.mortgageratio <- get_acs(
   variables = mortgage_to_income,
   state = "CA", 
   county = "Los Angeles",
-  year = 2019,
+  year = 2016,
   geometry = TRUE,
   output = "wide") %>%
   arrange(GEOID)
@@ -409,6 +460,50 @@ inglewood.cali.mortgageratio <- inglewood.cali.mortgageratio %>%
   st_drop_geometry()
 
 
+##################
+##################
+
+####LOS ANGELES RAMS --- EDUCATIONAL ATTAINMENT
+inglewood.cali.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "CA",
+  county = "Los Angeles",
+  year = 2016,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####LOS ANGELES RAMS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+inglewood.cities <- get_acs(
+  geography = "place",
+  state = "CA",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2016,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, California")))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+inglewood.cali.education <- inglewood.cali.education %>%
+  st_join(inglewood.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Inglewood") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+inglewood.cali.education <- inglewood.cali.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+inglewood.cali.education <- inglewood.cali.education %>%
+  st_drop_geometry()
+
 ####################
 ## MERGING THE DIFFERENT DATAFRAMES
 ####################
@@ -428,6 +523,7 @@ inglewood.cali <- inglewood.cali.geo %>%
   left_join(inglewood.cali.race) %>%
   left_join(inglewood.cali.rentincome) %>%
   left_join(inglewood.cali.mortgageratio) %>%
+  left_join(inglewood.cali.education) %>%
   mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
   filter(urban_name == "Inglewood")
 
@@ -444,28 +540,876 @@ inglewood.cali$distance.to.stadium <- as.numeric(minutes_to_sofi)
 
 
 ####################
-## LET'S GET TO WORK ... PULLING CENSUS DATA - Arlington Heights, ILL
+## LET'S GET TO WORK ... PULLING CENSUS DATA - ATLANTA, GEORGIA
 ####################
 
+####ATLANTA FALCONS --- RACE DEMOGRAPHICS
+atlanta.georgia.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "GA",
+  county = "Fulton",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
 
-###UH OH - ARLINGTON HEIGHTS, ILL IS WITHIN TWO COUNTIES. MUST PASS A VECTOR.
-two.counties <- c("Cook", "Lake")
+####ATLANTA FALCONS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+georgia.cities <- get_acs(
+  geography = "place",
+  state = "GA",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2017,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, Georgia")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+atlanta.georgia.race <- atlanta.georgia.race %>%
+  st_join(georgia.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Atlanta") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+atlanta.georgia.race <- atlanta.georgia.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####ATLANTA FALCONS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+atlanta.georgia.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "GA", 
+  county = "Fulton",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+atlanta.georgia.housing <- atlanta.georgia.housing %>%
+  st_join(georgia.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Atlanta") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+atlanta.georgia.housing <- atlanta.georgia.housing %>%
+  st_drop_geometry()
+
+##################
+##################
+
+####ATLANTA FALCONS --- RENT TO INCOME RATIO
+atlanta.georgia.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "GA", 
+  county = "Fulton",
+  year = 2013,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
+
+atlanta.georgia.rentincome$rent.ratio[is.na(atlanta.georgia.rentincome$rent.ratio)] <- 
+  mean(atlanta.georgia.rentincome$rent.ratio, na.rm = TRUE)
+
+atlanta.georgia.rentincome <- atlanta.georgia.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+atlanta.georgia.rentincome <- atlanta.georgia.rentincome %>%
+  st_join(georgia.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Atlanta") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+atlanta.georgia.rentincome <- atlanta.georgia.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####ATLANTA FALCONS --- MORTGAGE TO INCOME RATIO
+atlanta.georgia.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "GA", 
+  county = "Fulton",
+  year = 2013,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID)
+
+atlanta.georgia.mortgageratio$mortgage.ratioE[is.na(atlanta.georgia.mortgageratio$mortgage.ratioE)] <- 
+  mean(atlanta.georgia.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+atlanta.georgia.mortgageratio <- atlanta.georgia.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+atlanta.georgia.mortgageratio <- atlanta.georgia.mortgageratio %>%
+  st_join(georgia.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Atlanta") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+atlanta.georgia.mortgageratio <- atlanta.georgia.mortgageratio %>%
+  st_drop_geometry()
+
+
+
+##################
+##################
+
+####ATLANTA FALCONS--- EDUCATIONAL ATTAINMENT
+atlanta.georgia.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "GA",
+  county = "Fulton",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+atlanta.georgia.education <- atlanta.georgia.education %>%
+  st_join(georgia.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Atlanta") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+atlanta.georgia.education <- atlanta.georgia.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+atlanta.georgia.education <- atlanta.georgia.education %>%
+  st_drop_geometry()
+
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+atlanta.georgia.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "GA",
+  county = "Fulton",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####LAS VEGAS RAIDERS --- JOINING THE DATAFRAMES INTO ONE
+atlanta.georgia <- atlanta.georgia.geo %>%
+  left_join(atlanta.georgia.housing) %>%
+  left_join(atlanta.georgia.race) %>%
+  left_join(atlanta.georgia.rentincome) %>%
+  left_join(atlanta.georgia.mortgageratio) %>%
+  left_join(atlanta.georgia.education) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Atlanta")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+mercedes.benz.distance <- mb_geocode("Mercedes Benz Stadium, Atlanta GA")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_mercedesbenz <- mb_matrix(atlanta.georgia, mercedes.benz.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+atlanta.georgia$distance.to.stadium <- as.numeric(minutes_to_mercedesbenz)
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - MINNEAPOLIS, MINNESOTA
+####################
+
+####MINNESOTA VIKINGS --- RACE DEMOGRAPHICS
+minneapolis.minnesota.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "MN",
+  county = "Hennepin",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####MINNESOTA VIKINGS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+minnesota.cities <- get_acs(
+  geography = "place",
+  state = "MN",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2017,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, Minnesota")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+minneapolis.minnesota.race <- minneapolis.minnesota.race %>%
+  st_join(minnesota.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Minneapolis") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+minneapolis.minnesota.race <- minneapolis.minnesota.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####MINNESOTA VIKINGS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+minneapolis.minnesota.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "MN", 
+  county = "Hennepin",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+minneapolis.minnesota.housing <- minneapolis.minnesota.housing %>%
+  st_join(minnesota.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Minneapolis") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+minneapolis.minnesota.housing <- minneapolis.minnesota.housing %>%
+  st_drop_geometry()
+
+##################
+##################
+
+####MINNESOTA VIKINGS --- RENT TO INCOME RATIO
+minneapolis.minnesota.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "MN", 
+  county = "Hennepin",
+  year = 2013,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
+
+minneapolis.minnesota.rentincome$rent.ratio[is.na(minneapolis.minnesota.rentincome$rent.ratio)] <- 
+  mean(minneapolis.minnesota.rentincome$rent.ratio, na.rm = TRUE)
+
+minneapolis.minnesota.rentincome <- minneapolis.minnesota.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+minneapolis.minnesota.rentincome <- minneapolis.minnesota.rentincome %>%
+  st_join(minnesota.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Minneapolis") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+minneapolis.minnesota.rentincome <- minneapolis.minnesota.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####MINNESOTA VIKINGS--- MORTGAGE TO INCOME RATIO
+minneapolis.minnesota.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "MN", 
+  county = "Hennepin",
+  year = 2013,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID)
+
+minneapolis.minnesota.mortgageratio$mortgage.ratioE[is.na(minneapolis.minnesota.mortgageratio$mortgage.ratioE)] <- 
+  mean(minneapolis.minnesota.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+minneapolis.minnesota.mortgageratio <- minneapolis.minnesota.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+minneapolis.minnesota.mortgageratio <- minneapolis.minnesota.mortgageratio %>%
+  st_join(minnesota.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Minneapolis") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+minneapolis.minnesota.mortgageratio <- minneapolis.minnesota.mortgageratio %>%
+  st_drop_geometry()
+
+
+
+##################
+##################
+
+####MINNESOTA VIKINGS--- EDUCATIONAL ATTAINMENT
+minneapolis.minnesota.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "MN",
+  county = "Hennepin",
+  year = 2013,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+minneapolis.minnesota.education <- minneapolis.minnesota.education %>%
+  st_join(minnesota.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Minneapolis") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+minneapolis.minnesota.education <- minneapolis.minnesota.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+minneapolis.minnesota.education <- minneapolis.minnesota.education %>%
+  st_drop_geometry()
+
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+minneapolis.minnesota.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "MN",
+  county = "Hennepin",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####LAS VEGAS RAIDERS --- JOINING THE DATAFRAMES INTO ONE
+minneapolis.minnesota <- minneapolis.minnesota.geo %>%
+  left_join(minneapolis.minnesota.housing) %>%
+  left_join(minneapolis.minnesota.race) %>%
+  left_join(minneapolis.minnesota.rentincome) %>%
+  left_join(minneapolis.minnesota.mortgageratio) %>%
+  left_join(minneapolis.minnesota.education) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Minneapolis")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+us.bank.distance <- mb_geocode("US Bank Stadium, Minneapolis MN")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_usbank <- mb_matrix(minneapolis.minnesota, us.bank.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+minneapolis.minnesota$distance.to.stadium <- as.numeric(minutes_to_usbank)
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - SANTA CLARA, CALIFORNIA
+####################
+
+####SAN FRANCISCO 49ERS --- RACE DEMOGRAPHICS
+santaclara.cali.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "CA",
+  county = "Santa Clara",
+  year = 2012,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####SAN FRANCISCO 49ERS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+california.cities <- get_acs(
+  geography = "place",
+  state = "CA",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2012,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, California")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+santaclara.cali.race <- santaclara.cali.race %>%
+  st_join(california.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Santa Clara") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+santaclara.cali.race <- santaclara.cali.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####SAN FRANCISCO 49ERS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+santaclara.cali.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "CA", 
+  county = "Santa Clara",
+  year = 2012,
+  geometry = TRUE,
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+santaclara.cali.housing <- santaclara.cali.housing %>%
+  st_join(california.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Santa Clara") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+santaclara.cali.housing <- santaclara.cali.housing %>%
+  st_drop_geometry()
+
+##################
+##################
+
+####SAN FRANCISCO 49ERS --- RENT TO INCOME RATIO
+santaclara.cali.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "CA", 
+  county = "Santa Clara",
+  year = 2012,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
+
+santaclara.cali.rentincome$rent.ratio[is.na(santaclara.cali.rentincome$rent.ratio)] <- 
+  mean(santaclara.cali.rentincome$rent.ratio, na.rm = TRUE)
+
+santaclara.cali.rentincome <- santaclara.cali.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+santaclara.cali.rentincome <- santaclara.cali.rentincome %>%
+  st_join(california.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Santa Clara") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+santaclara.cali.rentincome <- santaclara.cali.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####SAN FRANCISCO 49ERS--- MORTGAGE TO INCOME RATIO
+santaclara.cali.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "CA", 
+  county = "Santa Clara",
+  year = 2012,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID)
+
+santaclara.cali.mortgageratio$mortgage.ratioE[is.na(santaclara.cali.mortgageratio$mortgage.ratioE)] <- 
+  mean(santaclara.cali.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+santaclara.cali.mortgageratio <- santaclara.cali.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+santaclara.cali.mortgageratio <- santaclara.cali.mortgageratio %>%
+  st_join(california.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Santa Clara") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+santaclara.cali.mortgageratio <- santaclara.cali.mortgageratio %>%
+  st_drop_geometry()
+
+
+
+##################
+##################
+
+####SAN FRANCISCO 49ERS--- EDUCATIONAL ATTAINMENT
+santaclara.cali.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "CA",
+  county = "Santa Clara",
+  year = 2012,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+santaclara.cali.education <- santaclara.cali.education %>%
+  st_join(california.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Santa Clara") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+santaclara.cali.education <- santaclara.cali.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+santaclara.cali.education <- santaclara.cali.education %>%
+  st_drop_geometry()
+
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+santaclara.cali.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "CA",
+  county = "Santa Clara",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####SAN FRANCISCO 49ERS--- JOINING THE DATAFRAMES INTO ONE
+santaclara.cali <- santaclara.cali.geo %>%
+  left_join(santaclara.cali.housing) %>%
+  left_join(santaclara.cali.race) %>%
+  left_join(santaclara.cali.rentincome) %>%
+  left_join(santaclara.cali.mortgageratio) %>%
+  left_join(santaclara.cali.education) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Santa Clara")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+levi.stadium.distance <- mb_geocode("Levis Stadium, Santa Clara CA")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_levis <- mb_matrix(santaclara.cali, levi.stadium.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+santaclara.cali$distance.to.stadium <- as.numeric(minutes_to_levis)
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - EAST RUTHERFORD, NEW JERSEY
+####################
+
+####GIANTS/JETS --- RACE DEMOGRAPHICS
+rutherford.nj.race <- get_acs(
+  geography = "tract",
+  variables = race_demographic,
+  state = "NJ",
+  county = "Bergen",
+  year = 2009,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####GIANTS/JETS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+nj.cities <- get_acs(
+  geography = "place",
+  state = "NJ",
+  variables = "B01001_001",
+  geometry = TRUE,
+  year = 2015,
+  survey = "acs1"
+) %>%
+  transmute(urban_name = str_remove(NAME, 
+                                    fixed(" city, New Jersey")))
+
+####JOINING TO COMBINED TRACTS TO DATA
+rutherford.nj.race <- rutherford.nj.race %>%
+  st_join(nj.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Passaic") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("white", "black", "asian", "hispanic"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+rutherford.nj.race <- rutherford.nj.race %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+
+####GIANTS/JETS --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+rutherford.nj.housing <- get_acs(
+  geography = "tract",
+  variables = housing_numbers,
+  state = "NJ", 
+  county = "Bergen",
+  year = 2009,
+  geometry = TRUE,
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+####JOINING TO COMBINED TRACTS TO DATA
+rutherford.nj.housing <- rutherford.nj.housing %>%
+  st_join(nj.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Passaic") %>%
+  spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
+  rename_at(vars("units_loan", "units_owned", "units_rented"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+rutherford.nj.housing <- rutherford.nj.housing %>%
+  st_drop_geometry()
+
+##################
+##################
+
+####GIANTS/JETS --- RENT TO INCOME RATIO
+rutherford.nj.rentincome <- get_acs(
+  geography = "tract",
+  variables = rent_to_income,
+  state = "NJ", 
+  county = "Bergen",
+  year = 2009,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
+
+rutherford.nj.rentincome$rent.ratio[is.na(rutherford.nj.rentincome$rent.ratio)] <- 
+  mean(rutherford.nj.rentincome$rent.ratio, na.rm = TRUE)
+
+rutherford.nj.rentincome <- rutherford.nj.rentincome %>%
+  select(-c(median.incomeE, median.rentM, median.incomeM, median.rentE))
+
+####JOINING TO COMBINED TRACTS TO DATA
+rutherford.nj.rentincome <- rutherford.nj.rentincome %>%
+  st_join(nj.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Passaic") %>%
+  rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+rutherford.nj.rentincome <- rutherford.nj.rentincome %>%
+  st_drop_geometry()
+
+
+##################
+##################
+
+####GIANTS/JETS--- MORTGAGE TO INCOME RATIO
+rutherford.nj.mortgageratio <- get_acs(
+  geography = "tract",
+  variables = mortgage_to_income,
+  state = "NJ", 
+  county = "Bergen",
+  year = 2009,
+  geometry = TRUE,
+  output = "wide",
+  survey = "acs5") %>%
+  arrange(GEOID)
+
+rutherford.nj.mortgageratio$mortgage.ratioE[is.na(rutherford.nj.mortgageratio$mortgage.ratioE)] <- 
+  mean(rutherford.nj.mortgageratio$mortgage.ratioE, na.rm = TRUE)
+
+rutherford.nj.mortgageratio <- rutherford.nj.mortgageratio %>%
+  select(-c(mortgage.ratioM))
+
+####JOINING TO COMBINED TRACTS TO DATA
+rutherford.nj.mortgageratio <- rutherford.nj.mortgageratio %>%
+  st_join(nj.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Passaic") %>%
+  rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+rutherford.nj.mortgageratio <- rutherford.nj.mortgageratio %>%
+  st_drop_geometry()
+
+
+
+##################
+##################
+
+nj.educational_attainment <- c(
+  male.graduate.degree = "B15002_016",
+  female.graduate.degree = "B15002_033"
+)
+
+####GIANTS/JETS--- EDUCATIONAL ATTAINMENT
+rutherford.nj.education <- get_acs(
+  geography = "tract",
+  variables = nj.educational_attainment,
+  state = "NJ",
+  county = "Bergen",
+  year = 2009,
+  geometry = TRUE,
+  summary_var = "B01003_001",
+  survey = "acs5",
+  output = "wide") %>%
+  arrange(GEOID)
+
+rutherford.nj.education <- rutherford.nj.education %>%
+  group_by(GEOID) %>%
+  mutate(total = sum(male.graduate.degreeE + female.graduate.degreeE)) %>%
+  mutate(graduate.degree = 100 * (total / summary_est)) %>%
+  select(-c(summary_est, summary_moe, male.graduate.degreeE, male.graduate.degreeM, female.graduate.degreeE, female.graduate.degreeM, total))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+rutherford.nj.education <- rutherford.nj.education %>%
+  st_join(nj.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Passaic") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+rutherford.nj.education <- rutherford.nj.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+rutherford.nj.education <- rutherford.nj.education %>%
+  st_drop_geometry()
+
+
+####################
+## MERGING THE DIFFERENT DATAFRAMES
+####################
+
+####PULLING GEOMETRY BACK IN TO REMERGE
+rutherford.nj.geo <- get_acs(
+  geography = "tract",
+  variables = "B02001_002",
+  state = "NJ",
+  county = "Bergen",
+  geometry = TRUE) %>%
+  select(-c(variable, estimate, moe))
+
+####SAN FRANCISCO 49ERS--- JOINING THE DATAFRAMES INTO ONE
+rutherford.nj <- rutherford.nj.geo %>%
+  left_join(rutherford.nj.housing) %>%
+  left_join(rutherford.nj.race) %>%
+  left_join(rutherford.nj.rentincome) %>%
+  left_join(rutherford.nj.mortgageratio) %>%
+  left_join(rutherford.nj.education) %>%
+  mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
+  filter(urban_name == "Passaic")
+
+####################
+## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
+####################
+##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
+metlife.stadium.distance <- mb_geocode("MetLife Stadium, East Rutheford NJ")
+##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
+minutes_to_metlife <- mb_matrix(rutherford.nj, metlife.stadium.distance)
+##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
+rutherford.nj$distance.to.stadium <- as.numeric(minutes_to_metlife)
+
+
+
+
+####################
+## LET'S GET TO WORK ... PULLING CENSUS DATA - ARLINGTON HEIGHTS, ILL
+####################
+
+##Arlington Heights, IL is located in two counties. Must pass a vector.
+
+arlington.counties <- c("Cook", "Lake")
 
 ####CHICAGO BEARS --- RACE DEMOGRAPHICS
 arlington.heights.race <- get_acs(
   geography = "tract",
   variables = race_demographic,
   state = "IL",
-  county = two.counties,
+  county = arlington.counties,
   year = 2019,
   geometry = TRUE,
-  summary_var = "B02001_001") %>%
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(estimate = estimate / summary_est) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
   select(-c(summary_est, moe, summary_moe))
 
-####CHICAGO BEARS--- GATHERING CITIES TO MERGE TRACTS WITH DATA
-ill.cities <- get_acs(
+####GIANTS/JETS --- GATHERING CITIES TO MERGE TRACTS WITH DATA
+arlington.heights.cities <- get_acs(
   geography = "place",
   state = "IL",
   variables = "B01001_001",
@@ -474,13 +1418,11 @@ ill.cities <- get_acs(
   survey = "acs1"
 ) %>%
   transmute(urban_name = str_remove(NAME, 
-                                    fixed(" city, Illinois"))) %>%
-  transmute(urban_name = str_remove(urban_name,
                                     fixed(" village, Illinois")))
 
 ####JOINING TO COMBINED TRACTS TO DATA
 arlington.heights.race <- arlington.heights.race %>%
-  st_join(ill.cities, left = FALSE) %>%
+  st_join(arlington.heights.cities, left = FALSE) %>%
   select(-NAME) %>%
   filter(urban_name == "Arlington Heights") %>%
   spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
@@ -495,22 +1437,23 @@ arlington.heights.race <- arlington.heights.race %>%
 ##################
 
 
-####CHICAGO BEARS--- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
+####CHICAGO --- HOUSING INFORMATION (MORTGAGE, OWNED, RENT)
 arlington.heights.housing <- get_acs(
   geography = "tract",
   variables = housing_numbers,
   state = "IL", 
-  county = two.counties,
+  county = arlington.counties,
   year = 2019,
   geometry = TRUE,
-  summary_var = "B25003_001") %>%
+  summary_var = "B25003_001",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(estimate = estimate / summary_est) %>%
+  mutate(estimate = 100 * (estimate / summary_est)) %>%
   select(-c(summary_est, moe, summary_moe))
 
 ####JOINING TO COMBINED TRACTS TO DATA
 arlington.heights.housing <- arlington.heights.housing %>%
-  st_join(ill.cities, left = FALSE) %>%
+  st_join(arlington.heights.cities, left = FALSE) %>%
   select(-NAME) %>%
   filter(urban_name == "Arlington Heights") %>%
   spread(variable, estimate) %>% ##NOTE: SPREAD IS JUST PREPPING FOR K-MEANS ... REMOVE TO DO ANY WORK WITH GEOM_SF
@@ -520,21 +1463,21 @@ arlington.heights.housing <- arlington.heights.housing %>%
 arlington.heights.housing <- arlington.heights.housing %>%
   st_drop_geometry()
 
-
 ##################
 ##################
 
-####CHICAGO BEARS --- RENT TO INCOME RATIO
+####CHICAGO --- RENT TO INCOME RATIO
 arlington.heights.rentincome <- get_acs(
   geography = "tract",
   variables = rent_to_income,
   state = "IL", 
-  county = two.counties,
+  county = arlington.counties,
   year = 2019,
   geometry = TRUE,
-  output = "wide") %>%
+  output = "wide",
+  survey = "acs5") %>%
   arrange(GEOID) %>%
-  mutate(rent.ratio = median.rentE / (median.incomeE / 12))
+  mutate(rent.ratio = 100 * (median.rentE / (median.incomeE / 12)))
 
 arlington.heights.rentincome$rent.ratio[is.na(arlington.heights.rentincome$rent.ratio)] <- 
   mean(arlington.heights.rentincome$rent.ratio, na.rm = TRUE)
@@ -544,7 +1487,7 @@ arlington.heights.rentincome <- arlington.heights.rentincome %>%
 
 ####JOINING TO COMBINED TRACTS TO DATA
 arlington.heights.rentincome <- arlington.heights.rentincome %>%
-  st_join(ill.cities, left = FALSE) %>%
+  st_join(arlington.heights.cities, left = FALSE) %>%
   select(-NAME) %>%
   filter(urban_name == "Arlington Heights") %>%
   rename_at(vars("rent.ratio"), list(~ str_c("pct_", .)))
@@ -557,15 +1500,16 @@ arlington.heights.rentincome <- arlington.heights.rentincome %>%
 ##################
 ##################
 
-####CHICAGO BEARS --- MORTGAGE TO INCOME RATIO
+####GIANTS/JETS--- MORTGAGE TO INCOME RATIO
 arlington.heights.mortgageratio <- get_acs(
   geography = "tract",
   variables = mortgage_to_income,
   state = "IL", 
-  county = two.counties,
+  county = arlington.counties,
   year = 2019,
   geometry = TRUE,
-  output = "wide") %>%
+  output = "wide",
+  survey = "acs5") %>%
   arrange(GEOID)
 
 arlington.heights.mortgageratio$mortgage.ratioE[is.na(arlington.heights.mortgageratio$mortgage.ratioE)] <- 
@@ -576,13 +1520,47 @@ arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
 
 ####JOINING TO COMBINED TRACTS TO DATA
 arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
-  st_join(ill.cities, left = FALSE) %>%
+  st_join(arlington.heights.cities, left = FALSE) %>%
   select(-NAME) %>%
   filter(urban_name == "Arlington Heights") %>%
   rename_at(vars("mortgage.ratioE"), list(~ str_c("pct_", .)))
 
 ####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
 arlington.heights.mortgageratio <- arlington.heights.mortgageratio %>%
+  st_drop_geometry()
+
+
+
+##################
+##################
+
+####CHICAGO BEARS  --- EDUCATIONAL ATTAINMENT
+arlington.heights.education <- get_acs(
+  geography = "tract",
+  variables = educational_attainment,
+  state = "IL",
+  county = arlington.counties,
+  year = 2019,
+  geometry = TRUE,
+  summary_var = "B02001_001",
+  survey = "acs5") %>%
+  arrange(GEOID) %>%
+  mutate(graduate.degree = 100 * (estimate / summary_est)) %>%
+  select(-c(summary_est, moe, summary_moe))
+
+
+####JOINING TO COMBINED TRACTS TO DATA
+arlington.heights.education <- arlington.heights.education %>%
+  st_join(arlington.heights.cities, left = FALSE) %>%
+  select(-NAME) %>%
+  filter(urban_name == "Arlington Heights") %>%
+  rename_at(vars("graduate.degree"), list(~ str_c("pct_", .)))
+
+arlington.heights.education <- arlington.heights.education %>%
+  select(GEOID, pct_graduate.degree, urban_name)
+
+####NOW REMOVING GEOMETRY IN ORDER TO CLEANLY MERGE LATER ON
+arlington.heights.education <- arlington.heights.education %>%
   st_drop_geometry()
 
 ####################
@@ -594,16 +1572,17 @@ arlington.heights.geo <- get_acs(
   geography = "tract",
   variables = "B02001_002",
   state = "IL",
-  county = two.counties,
+  county = arlington.counties,
   geometry = TRUE) %>%
   select(-c(variable, estimate, moe))
 
-####LOS ANGELES RAMS --- JOINING THE DATAFRAMES INTO ONE
+####CHICAGO BEARS--- JOINING THE DATAFRAMES INTO ONE
 arlington.heights <- arlington.heights.geo %>%
   left_join(arlington.heights.housing) %>%
   left_join(arlington.heights.race) %>%
   left_join(arlington.heights.rentincome) %>%
   left_join(arlington.heights.mortgageratio) %>%
+  left_join(arlington.heights.education) %>%
   mutate(id = str_c(GEOID, NAME, sep = " | ")) %>%
   filter(urban_name == "Arlington Heights")
 
@@ -611,11 +1590,11 @@ arlington.heights <- arlington.heights.geo %>%
 ## GETTING DISTANCE IN MINUTES TO STADIUM USING TRACT CENTROIDS
 ####################
 ##GETTING COORDINATE INFORMATION FOR ALLEGIANT STADIUM
-bears.stadium.distance <- mb_geocode("Arlington International Racecourse, Arlington Heights IL")
+arlington.stadium.distance <- mb_geocode("Arlington International Racecourse, Arlington Heights IL")
 ##MAPPING MINUTES TO ALLEGIANT VIA TRACT CENTROIDS
-minutes_to_bears <- mb_matrix(arlington.heights, bears.stadium.distance)
+minutes_to_arlington <- mb_matrix(arlington.heights, arlington.stadium.distance)
 ##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
-arlington.heights$distance.to.stadium <- as.numeric(minutes_to_bears)
+arlington.heights$distance.to.stadium <- as.numeric(minutes_to_arlington)
 
 
 
@@ -625,5 +1604,955 @@ arlington.heights$distance.to.stadium <- as.numeric(minutes_to_bears)
 ####################
 
 kmeans.data <- rbind(arlington.heights,
+                     atlanta.georgia,
                      inglewood.cali,
-                     paradise.nevada)
+                     minneapolis.minnesota,
+                     paradise.nevada,
+                     rutherford.nj,
+                     santaclara.cali)
+
+kmeans.data <- na.omit(kmeans.data)
+
+
+st_write(kmeans.data, "completedata.shp")
+
+
+####################
+## PREPARING PRINCIPLE COMPONENT ANALYSIS
+####################
+
+set.seed(1984)
+
+cleaned.kmeans <- kmeans.data %>%
+  select(-GEOID, -urban_name, -id, -NAME) %>%
+  st_drop_geometry()
+
+pca <- prcomp(
+  formula = ~.,
+  data = cleaned.kmeans,
+  scale. = TRUE,
+  center = TRUE)
+
+summary(pca)
+
+pca_tibble <- pca$rotation %>%
+  as_tibble(rownames = "predictor")
+
+pca_tibble %>%
+  select(predictor:PC5) %>%
+  pivot_longer(PC1:PC5, names_to = "component", values_to = "value") %>%
+  ggplot(aes(x = value, y = predictor)) +
+  geom_col(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
+  facet_wrap(~component, nrow = 1) +
+  labs(y = NULL, x = "Value") +
+  theme_minimal()
+
+components <- predict(pca, cleaned.kmeans)
+
+total_pca <- kmeans.data %>%
+  select(GEOID, urban_name, NAME) %>%
+  cbind(components)
+
+final_kmeans <- total_pca %>%
+  st_drop_geometry() %>%
+  select(PC1:PC11) %>%
+  kmeans(centers = 3)
+
+table(final_kmeans$cluster)
+
+final_clusters <- total_pca %>%
+  mutate(cluster = as.character(final_kmeans$cluster))
+
+######################DONE##############################
+
+final_clusters %>%
+  group_by(urban_name, cluster) %>%
+  summarize(total = n())
+
+output_clusters <- final_clusters
+
+st_write(output_clusters, "kmeansdata.shp")
+
+###########################################################
+
+output_clusters.final <- output_clusters %>%
+  select(-c(PC1:PC11)) %>%
+  st_drop_geometry()
+
+kmeans.join <- kmeans.data %>%
+  select(-c(NAME, urban_name, NAME, id))
+
+final.data <- left_join(output_clusters.final, as.data.frame(kmeans.join), by = c("GEOID" = "GEOID"))
+
+st_write(final.data, "finaldata.shp")
+
+final.data %>%
+  group_by(urban_name, cluster) %>%
+  summarize(total = n())
+
+####GATHERING INTO CLUSTER 3 BY AREA TO PREP FOR ZTRAX
+
+arlington.census <- final.data %>%
+  filter(urban_name == "Arlington Heights" & cluster == 3)
+
+atlanta.census <- final.data %>%
+  filter(urban_name == "Atlanta" & cluster == 3)
+
+minneapolis.census <- final.data %>%
+  filter(urban_name == "Minneapolis" & cluster == 3)
+
+paradise.census <- final.data %>%
+  filter(urban_name == "Paradise" & cluster == 3)
+
+rutherford.census <- final.data %>%
+  filter(urban_name == "Passaic" & cluster == 3)
+
+santaclara.census <- final.data %>%
+  filter(urban_name == "Santa Clara" & cluster == 3)
+
+
+
+####################
+## MOVING TO ZTRAX DATA NOW
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+arlingtonheights.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                                   select = c(1,53, 54, 55),
+                                   sep = '|',
+                                   header = FALSE,
+                                   stringsAsFactors = FALSE,       
+                                   quote = "")
+##RENAMING THE COLUMNS
+arlingtonheights.propertyinfo <- arlingtonheights.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+arlingtonheights.propertyinfo <- arlingtonheights.propertyinfo %>%
+  filter(str_detect(CensusTract, c("7703", "7704", "8025", "8026", "8027",
+                    "8028", "8029", "8030", "8031", "8032", "8033", "8034",
+                    "8035", "8036", "8039", "8040", "8050", "8051", "8644", "8645")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+arlingtonheights.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                                       select = c(1,18,25),
+                                       sep = '|',
+                                       header = FALSE,
+                                       stringsAsFactors = FALSE,       
+                                       quote = "")
+
+arlingtonheights.main <- arlingtonheights.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+arlingtonheights.main <- na.omit(arlingtonheights.main)
+
+arlington.data <- left_join(arlingtonheights.propertyinfo, arlingtonheights.main, by = c("RowID" = "RowID"))
+arlington.data <- na.omit(arlington.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+arlington.data <- arlington.data %>%
+  mutate(lat = 42.09339,
+         log = -88.01013)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+arlington.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+arlington.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+arlington.data <- arlington.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+arlington.data <- arlington.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+arlington.data <- arlington.data %>%
+  filter(distance <= 20)
+
+arlington.data <- arlington.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+arlington.data <- arlington.data %>%
+  mutate(urban_name = "Arlington Heights")
+
+####################
+####################
+## MOVING TO ATLANTA
+####################
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Atlanta"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+atlanta.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                                       select = c(1,53, 54, 55),
+                                       sep = '|',
+                                       header = FALSE,
+                                       stringsAsFactors = FALSE,       
+                                       quote = "")
+##RENAMING THE COLUMNS
+atlanta.propertyinfo <- atlanta.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+atlanta.propertyinfo <- atlanta.propertyinfo %>%
+  filter(str_detect(CensusTract, c("0001", "0100", "1010", "0102", "0011",
+                                   "0111", "0002", "0003", "0004", "0049", "0005", "0050",
+                                   "0052", "0053", "0080", "0089", "0090", "0093", "0094", "0095",
+                                   "0096", "0097", "0098", "0099")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+atlanta.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                               select = c(1,18,25),
+                               sep = '|',
+                               header = FALSE,
+                               stringsAsFactors = FALSE,       
+                               quote = "")
+
+atlanta.main <- atlanta.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+atlanta.main <- na.omit(atlanta.main)
+
+atlanta.data <- left_join(atlanta.propertyinfo, atlanta.main, by = c("RowID" = "RowID"))
+atlanta.data <- na.omit(atlanta.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+atlanta.data <- atlanta.data %>%
+  mutate(lat = 33.75556,
+         log = -84.40059)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+atlanta.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+atlanta.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+atlanta.data <- atlanta.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+atlanta.data <- atlanta.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+atlanta.data <- atlanta.data %>%
+  filter(distance <= 20)
+
+atlanta.data <- atlanta.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+atlanta.data <- atlanta.data %>%
+  mutate(urban_name = "Atlanta")
+
+
+####################
+####################
+## MOVING TO minneapolis
+####################
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Minneapolis"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+minneapolis.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                                  select = c(1,53, 54, 55),
+                                  sep = '|',
+                                  header = FALSE,
+                                  stringsAsFactors = FALSE,       
+                                  quote = "")
+##RENAMING THE COLUMNS
+minneapolis.propertyinfo <- minneapolis.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+minneapolis.propertyinfo <- minneapolis.propertyinfo %>%
+  filter(str_detect(CensusTract, c("0001", "1002", "1005", "1007", "1012", "1036", "1051", "0106", "1065",
+                                   "1066", "0107", "1074", "1075", "1076", "1087", "1088", "1089", "1090",
+                                   "1091", "1097", "1098", "1099", "0011", "0110", "1101", "1102", "1104",
+                                   "1105", "1108", "1109", "1111", "1112", "1113", "1114", "1115", "1116",
+                                   "0117", "0118", "0119", "0120", "0121", "1256", "1262", "0201", "0204",
+                                   "0205", "0212", "0214", "0217", "0218", "0220", "0228", "0229", "0231",
+                                   "0236", "0238", "0241", "0244", "0247", "0249", "0003", "0006", "0090")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+minneapolis.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                          select = c(1,18,25),
+                          sep = '|',
+                          header = FALSE,
+                          stringsAsFactors = FALSE,       
+                          quote = "")
+
+minneapolis.main <- minneapolis.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+minneapolis.main <- na.omit(minneapolis.main)
+
+minneapolis.data <- left_join(minneapolis.propertyinfo, minneapolis.main, by = c("RowID" = "RowID"))
+minneapolis.data <- na.omit(minneapolis.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+minneapolis.data <- minneapolis.data %>%
+  mutate(lat = 44.97377,
+         log = -93.25757)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+minneapolis.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+minneapolis.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+minneapolis.data <- minneapolis.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+minneapolis.data <- minneapolis.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+minneapolis.data <- minneapolis.data %>%
+  filter(distance <= 20)
+
+minneapolis.data <- minneapolis.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+
+minneapolis.data <- minneapolis.data %>%
+  mutate(urban_name = "Minneapolis")
+
+
+
+####################
+####################
+## MOVING TO paradise
+####################
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Nevada"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+paradise.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                               select = c(1,53, 54, 55),
+                               sep = '|',
+                               header = FALSE,
+                               stringsAsFactors = FALSE,       
+                               quote = "")
+##RENAMING THE COLUMNS
+paradise.propertyinfo <- paradise.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+paradise.propertyinfo <- paradise.propertyinfo %>%
+  filter(str_detect(CensusTract, c("0017", "0018", "0028", "0029", "0050", "0051", "0053", "0069")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+paradise.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                       select = c(1,18,25),
+                       sep = '|',
+                       header = FALSE,
+                       stringsAsFactors = FALSE,       
+                       quote = "")
+
+paradise.main <- paradise.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+paradise.main <- na.omit(paradise.main)
+
+paradise.data <- left_join(paradise.propertyinfo, paradise.main, by = c("RowID" = "RowID"))
+paradise.data <- na.omit(paradise.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+paradise.data <- paradise.data %>%
+  mutate(lat = 36.09093,
+         log = -115.18334)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+paradise.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+paradise.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+paradise.data <- paradise.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+paradise.data <- paradise.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+paradise.data <- paradise.data %>%
+  filter(distance <= 20)
+
+paradise.data <- paradise.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+
+paradise.data <- paradise.data %>%
+  mutate(urban_name = "paradise")
+
+
+
+####################
+####################
+## MOVING TO Rutherford
+####################
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Rutherford"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+rutherford.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                                 select = c(1,53, 54, 55),
+                                 sep = '|',
+                                 header = FALSE,
+                                 stringsAsFactors = FALSE,       
+                                 quote = "")
+##RENAMING THE COLUMNS
+rutherford.propertyinfo <- rutherford.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+rutherford.propertyinfo <- rutherford.propertyinfo %>%
+  filter(str_detect(CensusTract, c("0512", "0572", "0511", "0571")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+rutherford.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                         select = c(1,18,25),
+                         sep = '|',
+                         header = FALSE,
+                         stringsAsFactors = FALSE,       
+                         quote = "")
+
+rutherford.main <- rutherford.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+rutherford.main <- na.omit(rutherford.main)
+
+rutherford.data <- left_join(rutherford.propertyinfo, rutherford.main, by = c("RowID" = "RowID"))
+rutherford.data <- na.omit(rutherford.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+rutherford.data <- rutherford.data %>%
+  mutate(lat = 40.81358,
+         log = -74.07444)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+rutherford.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+rutherford.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+rutherford.data <- rutherford.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+rutherford.data <- rutherford.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+rutherford.data <- rutherford.data %>%
+  filter(distance <= 20)
+
+rutherford.data <- rutherford.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+
+rutherford.data <- rutherford.data %>%
+  mutate(urban_name = "Rutherford")
+
+
+
+
+####################
+####################
+## MOVING TO Santa Clara
+####################
+####################
+
+dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Santa Clara"  ###Switching to Correct Directory
+
+###CALLING IN LAYOUT STYLESHEET
+layoutZAsmt <- read_excel(file.path(dir, 'layout.xlsx'), sheet = 1)
+layoutZTrans <- read_excel(file.path(dir, 'layout.xlsx'), 
+                           sheet = 2,
+                           col_types = c("text", "text", "numeric", "text", "text"))
+
+
+######################
+### PropertyInfo.txt ###
+######################
+
+###CREATING DATA.TABLE OF utPropertyInfo.TXT Stylesheet
+col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo', 'FieldName']
+
+
+###PIVOTING STYLESHEETS TO WIDE FORMAT
+col_namesPropertyInfo <- col_namesPropertyInfo %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+###GATHERING ARLINGTON HEIGHTS INFORMATION
+library(data.table)
+options(scipen = 999)
+santaclara.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+                                 select = c(1,53, 54, 55),
+                                 sep = '|',
+                                 header = FALSE,
+                                 stringsAsFactors = FALSE,       
+                                 quote = "")
+##RENAMING THE COLUMNS
+santaclara.propertyinfo <- santaclara.propertyinfo %>%
+  rename(
+    RowID = V1,
+    Latitude = V53,
+    Longitude = V54,
+    CensusTract = V55
+  )
+
+##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+santaclara.propertyinfo <- santaclara.propertyinfo %>%
+  filter(str_detect(CensusTract, c("5061", "5082", "5050", "5053", "5005", "5061", "5053", "5058")))
+
+###CREATING DATA.TABLE OF utMain.TXT Stylesheet
+col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
+
+col_namesMain <- col_namesMain %>%
+  pivot_wider(names_from = FieldName, values_from = FieldName)
+
+santaclara.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+                         select = c(1,18,25),
+                         sep = '|',
+                         header = FALSE,
+                         stringsAsFactors = FALSE,       
+                         quote = "")
+
+santaclara.main <- santaclara.main %>%
+  rename(
+    RowID = V1,
+    Date = V18,
+    SalesPrice = V25
+  )
+
+santaclara.main <- na.omit(santaclara.main)
+
+santaclara.data <- left_join(santaclara.propertyinfo, santaclara.main, by = c("RowID" = "RowID"))
+santaclara.data <- na.omit(santaclara.data)
+
+######################
+### GEO-CODING ###
+######################
+
+###CREATING VARIABLES FOR LATITUDE AND LONGITUDE
+santaclara.data <- santaclara.data %>%
+  mutate(lat = 37.40350,
+         log = -121.96938)
+
+library(geosphere)
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+meter2mile <- 0.000621371
+santaclara.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
+  cbind(Longitude, Latitude),
+  cbind(log, lat)) ]
+santaclara.data
+
+
+######################
+### GETTING DATE COLUMNS###
+######################
+
+santaclara.data <- santaclara.data %>%
+  mutate(Date = as.Date(Date),
+         year = year(Date), month = month(Date), day = day(Date))
+
+######################
+### DROPPING COLUMNS I DON'T NEED NOW###
+######################
+
+santaclara.data <- santaclara.data %>%
+  select(-c(Latitude, Longitude, CensusTract, Date, lat, log, month, day))
+
+######################
+### JUST 20 MILES AND ADD DISTANCE ORD###
+######################
+
+santaclara.data <- santaclara.data %>%
+  filter(distance <= 20)
+
+santaclara.data <- santaclara.data %>%
+  mutate(distance_ord = factor(
+    case_when(
+      distance <= 5 ~ "Short",
+      distance >= 5.0000001 & distance <= 10  ~ "Moderate",
+      distance >= 10.0000001 & distance <= 15 ~ "Long",
+      distance >= 15.0000001 & distance <= 20 ~ "Very Long")))
+
+
+######################
+### ADDING URBAN NAME###
+######################
+
+santaclara.data <- santaclara.data %>%
+  mutate(urban_name = "Santa Clara")
+
+
+####################
+####################
+## ADDING YEAR ORD
+####################
+####################
+
+arlington.data$year_ord = as.numeric(arlington.data$year >= 2019)
+atlanta.data$year_ord = as.numeric(atlanta.data$year >= 2014)
+minneapolis.data$year_ord = as.numeric(minneapolis.data$year >= 2013)
+paradise.data$year_ord = as.numeric(paradise.data$year >= 2017)
+rutherford.data$year_ord = as.numeric(rutherford.data$year >= 2007)
+santaclara.data$year_ord = as.numeric(santaclara.data$year >= 2012)
+
+
+####################
+####################
+## MERGING DATA TOGETHER
+####################
+####################
+
+merged.data <- rbind(arlington.data,
+                     atlanta.data,
+                     minneapolis.data,
+                     paradise.data,
+                     rutherford.data,
+                     santaclara.data)
+
+
+####################
+####################
+## CONSTRUCTING DID MODEL
+####################
+####################
+
+did_model <- merged.data %>%
+  group_by(urban_name) %>%
+  do(model = lm(SalesPrice ~ distance_ord * year_ord, data = .))
+
+did_model$model
+
+
+
+
