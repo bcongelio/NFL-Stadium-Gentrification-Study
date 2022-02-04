@@ -20,6 +20,12 @@ library(magrittr)
 library(data.table)
 library(geosphere)
 library(lubridate)
+library(layer)
+library(gt)
+library(gtExtras)
+library(gtsummary)
+library(viridis)
+library(fiftystater)
 
 ####################
 ## SETTING CACHE OPTIONS FOR TIGRIS TO IMPROVE CPU PERFORMANCE
@@ -63,7 +69,7 @@ variables <- load_variables(2009, "acs5", cache = TRUE)
 View(variables)
 
 ####################
-## SETTING UP VARIABLES ACS5 - **NOTE: these are edited for each year, as variables are changed by US Cenus
+## SETTING UP VARIABLES ACS5 - **NOTE: these are edited for each year, as variables are changed by US Census
 ####################
 
 ##EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER - MASTER'S DEGREE
@@ -319,8 +325,6 @@ allegiant.stadium.distance <- mb_geocode("Allegiant Stadium, Paradise NV")
 minutes_to_allegiant <- mb_matrix(paradise.nevada, allegiant.stadium.distance)
 ##ADDING DISTANCE IN TIME MATRIX TO DISTANCE COLUMN
 paradise.nevada$distance.to.stadium <- as.numeric(minutes_to_allegiant)
-
-
 
 
 ####################
@@ -1614,7 +1618,7 @@ kmeans.data <- rbind(arlington.heights,
 kmeans.data <- na.omit(kmeans.data)
 
 
-st_write(kmeans.data, "completedata.shp")
+st_write(paradise.nevada, "completedata.shp")
 
 
 ####################
@@ -2244,7 +2248,7 @@ paradise.data <- paradise.data %>%
 
 
 paradise.data <- paradise.data %>%
-  mutate(urban_name = "paradise")
+  mutate(urban_name = "Paradise")
 
 
 
@@ -2547,12 +2551,255 @@ merged.data <- rbind(arlington.data,
 ####################
 ####################
 
-did_model <- merged.data %>%
+models <- merged.data %>%
   group_by(urban_name) %>%
-  do(model = lm(SalesPrice ~ distance_ord * year_ord, data = .))
+  summarise(mod = list(lm(SalesPrice ~ distance_ord * year_ord)))
 
-did_model$model
+models$mod
+
+####################
+####################
+## VISUALIZATIONS
+####################
+####################
+
+#########
+##STACKED MAPS (TESTING FOR K-MEANS CLUSTERS)
+#########
 
 
+####USING LAYER'S BUILT IN FUNCTION
+tilt_landscape_1 <- tilt_map(paradise.nevada.race)
+tilt_landscape_2 <- tilt_map(paradise.nevada.race, x_shift = .01, y_shift = .18)
+tilt_landscape_3 <- tilt_map(paradise.nevada.race, x_shift = .01, y_shift = .36)
+tilt_landscape_4 <- tilt_map(paradise.nevada.race, x_shift = .01, y_shift = .54)
+
+map_list <- list(tilt_landscape_1, tilt_landscape_2, tilt_landscape_3, tilt_landscape_4)
+
+plot_tiltedmaps(map_list, 
+                layer = c("pct_white", "pct_black", "pct_asian", "pct_hispanic"),
+                palette = "mako")
+
+###USING GGPLOT FOR MORE CONTROL (BUT WAY HARDER)
+
+###
+##ARLINGTON HEIGHTS CLUSTER MAP
+###
+arlington.test <- st_as_sf(arlington.test)  ##NEED TO TRANSFORM DATA.FRAME TO SF
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(arlington.test), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(arlington.test, x_shift = -.05, y_shift = .15),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("arlington-clusters.png", dpi = 400)
 
 
+###
+##ATLANTA CLUSTER MAP
+###
+atlanta.test <- final.data %>%
+  filter(urban_name == "Atlanta")
+
+atlanta.test <- st_as_sf(atlanta.test) 
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(atlanta.test, y_tilt = 2), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(atlanta.test, y_tilt = 2, x_shift = -.05, y_shift = .35),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("atlanta-clusters.png", dpi = 400)
+
+###
+##MINNEAPOLIS CLUSTER MAP
+###
+minneapolis.test <- final.data %>%
+  filter(urban_name == "Minneapolis")
+
+minneapolis.test <- st_as_sf(minneapolis.test) 
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(minneapolis.test, y_tilt = 2), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(minneapolis.test, y_tilt = 2, x_shift = -.08, y_shift = .35),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("minneapolis-clusters.png", dpi = 400)
+
+###
+##PARADISE HEIGHTS CLUSTER MAP
+###
+paradise.test <- final.data %>%
+  filter(urban_name == "Paradise")
+
+paradise.test <- st_as_sf(paradise.test) 
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(paradise.test, y_tilt = 1.5), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(paradise.test, y_tilt = 1.5, x_shift = -.08, y_shift = .20),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("paradise-clusters.png", dpi = 400)
+
+###
+##SANTA CLARA CLUSTER MAP
+###
+santaclara.test <- final.data %>%
+  filter(urban_name == "Santa Clara")
+
+santaclara.test <- st_as_sf(santaclara.test) 
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(santaclara.test, y_tilt = 1.5), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(santaclara.test, y_tilt = 1.5, x_shift = -.08, y_shift = .21),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("santaclara-clusters.png", dpi = 400)
+
+###
+##PASSAIC HEIGHTS CLUSTER MAP
+###
+passaic.test <- final.data %>%
+  filter(urban_name == "Passaic")
+
+passaic.test <- st_as_sf(passaic.test) 
+
+ggplot() +
+  geom_sf(data = layer::tilt_map(passaic.test, y_tilt = 1.5), 
+          aes(fill = ifelse(cluster == 2, cluster, NA))) +
+  geom_sf(data = layer::tilt_map(passaic.test, y_tilt = 1.5, x_shift = -.05, y_shift = .03),
+          aes(fill = ifelse(cluster == 3, cluster, NA))) +
+  scale_fill_discrete(na.value = "transparent") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("passaic-clusters.png", dpi = 400)
+
+
+#########
+##DOING STATE/CENSUS TRACT OUTLINES
+#########
+
+####ILLINOIS - ARLINGTON HEIGHTS####
+illinois_sf <- tigris::counties(state = "Illinois")
+
+illinois_bounded <- arlington.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = illinois_sf, fill = "transparent") +
+  geom_sf(data = illinois_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("illinois-bounded.png", dpi = 400)
+
+####GEORGIA - ATLANTA###
+georgia_sf <- tigris::counties(state = "Georgia")
+
+atlanta_bounded <- atlanta.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = georgia_sf, fill = "transparent") +
+  geom_sf(data = atlanta_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("atlanta-bounded.png", dpi = 400)
+
+
+####MINNESOTA - MINNEAPOLIS###
+minnesota_sf <- tigris::counties(state = "Minnesota")
+
+minneapolis_bounded <- minneapolis.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = minnesota_sf, fill = "transparent") +
+  geom_sf(data = minneapolis_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("minneapolis-bounded.png", dpi = 400)
+
+####NEVADA - PARADISE###
+nevada_sf <- tigris::counties(state = "Nevada")
+
+paradise_bounded <- paradise.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = nevada_sf, fill = "transparent") +
+  geom_sf(data = paradise_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("paradise-bounded.png", dpi = 400)
+
+####CALIFORNIA - SANTA CLARA###
+california_sf <- tigris::counties(state = "California")
+
+santaclara_bounded <- santaclara.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = california_sf, fill = "transparent") +
+  geom_sf(data = santaclara_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("santaclara-bounded.png", dpi = 400)
+
+####NEW YORK - PASSAIC###
+jersey_sf <- tigris::counties(state = "New Jersey")
+
+passaic_bounded <- passaic.test %>% ###BINDING JUST THE BOUNDARIES OF THE TRACTS
+  dplyr::summarise(across(geometry, ~ sf::st_union(.)), .groups = "drop") %>%
+  dplyr::summarise(across(geometry, ~ sf::st_combine(.)), .groups = "keep")
+
+ggplot() +
+  geom_sf(data = jersey_sf, fill = "transparent") +
+  geom_sf(data = passaic_bounded, col = "#00AFBB", fill = "transparent", size = .5) +
+  theme_void()
+
+ggsave("passaic-bounded.png", dpi = 400)
+
+
+#########
+##GT TABLE CODING
+#########
+
+testing.sparklines <- cleaned.merged %>%
+  dplyr::group_by(urban_name) %>%
+  dplyr::summarize(
+    Distance = list(distance),
+    `Sales Price` = list(SalesPrice),
+    .groups = "drop")
+
+testing.sparklines %>%
+  arrange(urban_name) %>%
+  gt() %>%
+  gtExtras::gt_sparkline(Distance, type = "density", line_color = "black", 
+                         fill_color = "#56b4e9", label = "Distance") %>%
+  gtExtras::gt_sparkline(`Sales Price`, type = "density", line_color = "black", 
+                         fill_color = "#56b4e9")
