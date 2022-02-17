@@ -10,8 +10,8 @@ The approach utilizes K-means clustering and a DiD regression process to compare
 
 So far, this research has been used for:
 
-1. Research presentation at the 2022 ASMA Conference in Indianapolis, Indiana
-2. As part of a forthcoming peer-reviewed publication in the Journal of Applied Sport Management
+1. Research presentation at the 2022 ASMA Conference in Indianapolis, Indiana.
+2. As part of a forthcoming peer-reviewed publication.
 
 ![arlington-heights-map](https://user-images.githubusercontent.com/57458963/152689823-b059f1b4-bf95-4530-8e94-bd97e063bb67.png)
 
