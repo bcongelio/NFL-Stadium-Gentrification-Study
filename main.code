@@ -5,6 +5,8 @@
 library(tidyverse)
 library(tigris)
 library(tidycensus)
+library(readxl)
+library(data.table)
 library(sf)
 library(broom)
 library(viridis)
@@ -26,6 +28,15 @@ library(gtExtras)
 library(gtsummary)
 library(viridis)
 library(fiftystater)
+library(devtools)
+library(ggbiplot)
+library(corrr)
+library(mapdeck)
+library(ggthemes)
+
+
+###SETTING OPTION FOR SCIENTIFIC NOTATION
+options(scipen = 999)
 
 ####################
 ## SETTING CACHE OPTIONS FOR TIGRIS TO IMPROVE CPU PERFORMANCE
@@ -40,10 +51,11 @@ options(tigris_use_cache = TRUE)
 census_api_key("1a47c66da9f6c0239edead6eebbf3bceafcf6dca", overwrite = TRUE) ##FOR TIDYCENSUS
 readRenviron("~/.Renviron")
 
-my_token <- "pk.eyJ1IjoiYmNvbmdlbGlvIiwiYSI6ImNrdDNxZ2w2ODBhYmYydW5xZGg4OWJiNzkifQ.VwsWe9ZNilYhBXd3hA0vlQ"
-mb_access_token(my_token, install = TRUE) ##FOR MAPBOX API
-Sys.getenv("MAPBOX_PUBLIC_TOKEN")
-
+my_token <- "pk.eyJ1IjoiYmNvbmdlbGlvIiwiYSI6ImNrem96eDFsbjA2NDkybm9hdTRvYTJ1ZncifQ.jZ3aSxrQ2NVNV5A-aMEylw"
+my_secret_token <- "sk.eyJ1IjoiYmNvbmdlbGlvIiwiYSI6ImNrem96b2h5NzJoa3YydnM4bTAwZWR2c2wifQ.pz26Rj7p8jfkKc9hLkjOzQ"
+mb_access_token(my_secret_token, overwrite  = TRUE, install = TRUE) ##FOR MAPBOX API
+Sys.getenv("MAPBOX_SECRET_TOKEN")
+readRenviron("~/.Renviron")
 
 ####################
 ## STADIUM INFORMATION SO I DON'T FORGET & ACS STUFF FOR REFERENCE
@@ -1646,9 +1658,9 @@ pca_tibble %>%
   select(predictor:PC5) %>%
   pivot_longer(PC1:PC5, names_to = "component", values_to = "value") %>%
   ggplot(aes(x = value, y = predictor)) +
-  geom_col(fill = "darkgreen", color = "darkgreen", alpha = 0.5) +
+  geom_col(fill = "#00AFBB", color = "#BB0C00", alpha = 0.5) +
   facet_wrap(~component, nrow = 1) +
-  labs(y = NULL, x = "Value") +
+  labs(y = NULL, x = "Loaded Positively/Negatively") +
   theme_minimal()
 
 components <- predict(pca, cleaned.kmeans)
@@ -1659,7 +1671,7 @@ total_pca <- kmeans.data %>%
 
 final_kmeans <- total_pca %>%
   st_drop_geometry() %>%
-  select(PC1:PC11) %>%
+  select(PC1:PC10) %>%
   kmeans(centers = 3)
 
 table(final_kmeans$cluster)
@@ -1667,11 +1679,17 @@ table(final_kmeans$cluster)
 final_clusters <- total_pca %>%
   mutate(cluster = as.character(final_kmeans$cluster))
 
+#####
+##K-MEANS DATA VIZ STUFF
+#####
+
+ggbiplot(pca)
+
 ######################DONE##############################
 
 final_clusters %>%
   group_by(urban_name, cluster) %>%
-  summarize(total = n())
+  dplyr::summarise(total = n())
 
 output_clusters <- final_clusters
 
@@ -1680,7 +1698,7 @@ st_write(output_clusters, "kmeansdata.shp")
 ###########################################################
 
 output_clusters.final <- output_clusters %>%
-  select(-c(PC1:PC11)) %>%
+  select(-c(PC1:PC10)) %>%
   st_drop_geometry()
 
 kmeans.join <- kmeans.data %>%
@@ -1742,9 +1760,7 @@ col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
 ###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
-arlingtonheights.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
+arlingtonheights.propertyinfo <- fread(file.path(dir, "\\ArlingtonHeights\\ZTrans\\PropertyInfo.txt"),
                                    select = c(1,53, 54, 55),
                                    sep = '|',
                                    header = FALSE,
@@ -1760,6 +1776,7 @@ arlingtonheights.propertyinfo <- arlingtonheights.propertyinfo %>%
   )
 
 ##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 arlingtonheights.propertyinfo <- arlingtonheights.propertyinfo %>%
   filter(str_detect(CensusTract, c("7703", "7704", "8025", "8026", "8027",
                     "8028", "8029", "8030", "8031", "8032", "8033", "8034",
@@ -1771,7 +1788,7 @@ col_namesMain <- layoutZTrans[layoutZTrans$TableName == 'utMain', 'FieldName']
 col_namesMain <- col_namesMain %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
-arlingtonheights.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
+arlingtonheights.main <- fread(file.path(dir, "\\ArlingtonHeights\\ZTrans\\Main.txt"),
                                        select = c(1,18,25),
                                        sep = '|',
                                        header = FALSE,
@@ -1799,8 +1816,9 @@ arlington.data <- arlington.data %>%
   mutate(lat = 42.09339,
          log = -88.01013)
 
-library(geosphere)
+
 ###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 arlington.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -1874,8 +1892,6 @@ col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
 ###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
 atlanta.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
                                        select = c(1,53, 54, 55),
                                        sep = '|',
@@ -1911,6 +1927,7 @@ atlanta.main <- fread(file.path(dir, "\\ZTrans\\Main.txt"),
                                stringsAsFactors = FALSE,       
                                quote = "")
 
+
 atlanta.main <- atlanta.main %>%
   rename(
     RowID = V1,
@@ -1932,8 +1949,8 @@ atlanta.data <- atlanta.data %>%
   mutate(lat = 33.75556,
          log = -84.40059)
 
-library(geosphere)
 ###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 atlanta.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -2008,8 +2025,6 @@ col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
 ###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
 minneapolis.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
                                   select = c(1,53, 54, 55),
                                   sep = '|',
@@ -2026,6 +2041,7 @@ minneapolis.propertyinfo <- minneapolis.propertyinfo %>%
   )
 
 ##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 minneapolis.propertyinfo <- minneapolis.propertyinfo %>%
   filter(str_detect(CensusTract, c("0001", "1002", "1005", "1007", "1012", "1036", "1051", "0106", "1065",
                                    "1066", "0107", "1074", "1075", "1076", "1087", "1088", "1089", "1090",
@@ -2069,8 +2085,9 @@ minneapolis.data <- minneapolis.data %>%
   mutate(lat = 44.97377,
          log = -93.25757)
 
-library(geosphere)
-###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO STADIUM
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 minneapolis.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -2147,14 +2164,13 @@ col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
 ###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
 paradise.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
                                select = c(1,53, 54, 55),
                                sep = '|',
                                header = FALSE,
                                stringsAsFactors = FALSE,       
                                quote = "")
+
 ##RENAMING THE COLUMNS
 paradise.propertyinfo <- paradise.propertyinfo %>%
   rename(
@@ -2165,6 +2181,7 @@ paradise.propertyinfo <- paradise.propertyinfo %>%
   )
 
 ##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 paradise.propertyinfo <- paradise.propertyinfo %>%
   filter(str_detect(CensusTract, c("0017", "0018", "0028", "0029", "0050", "0051", "0053", "0069")))
 
@@ -2202,8 +2219,8 @@ paradise.data <- paradise.data %>%
   mutate(lat = 36.09093,
          log = -115.18334)
 
-library(geosphere)
-###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO STADIUM
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 paradise.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -2279,9 +2296,7 @@ col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo'
 col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
-###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
+###GATHERING RUTHERFORD INFORMATION
 rutherford.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
                                  select = c(1,53, 54, 55),
                                  sep = '|',
@@ -2335,8 +2350,8 @@ rutherford.data <- rutherford.data %>%
   mutate(lat = 40.81358,
          log = -74.07444)
 
-library(geosphere)
-###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO STADIUM
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 rutherford.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -2379,11 +2394,8 @@ rutherford.data <- rutherford.data %>%
 ### ADDING URBAN NAME###
 ######################
 
-
 rutherford.data <- rutherford.data %>%
   mutate(urban_name = "Rutherford")
-
-
 
 
 ####################
@@ -2391,6 +2403,8 @@ rutherford.data <- rutherford.data %>%
 ## MOVING TO Santa Clara
 ####################
 ####################
+
+###HEADS UP: THIS ONES TAKES QUITE A WHILE TO RUN AND COMPILE.
 
 dir <- "D:\\ZTRAX\\Research\\ChicagoPaper\\Santa Clara"  ###Switching to Correct Directory
 
@@ -2413,9 +2427,7 @@ col_namesPropertyInfo <- layoutZTrans[layoutZTrans$TableName == 'utPropertyInfo'
 col_namesPropertyInfo <- col_namesPropertyInfo %>%
   pivot_wider(names_from = FieldName, values_from = FieldName)
 
-###GATHERING ARLINGTON HEIGHTS INFORMATION
-library(data.table)
-options(scipen = 999)
+###GATHERING SANTA CLARA INFORMATION
 santaclara.propertyinfo <- fread(file.path(dir, "\\ZTrans\\PropertyInfo.txt"),
                                  select = c(1,53, 54, 55),
                                  sep = '|',
@@ -2432,6 +2444,7 @@ santaclara.propertyinfo <- santaclara.propertyinfo %>%
   )
 
 ##SELECTING JUST THE CENSUS TRACTS FROM CLUSTER 3##
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 santaclara.propertyinfo <- santaclara.propertyinfo %>%
   filter(str_detect(CensusTract, c("5061", "5082", "5050", "5053", "5005", "5061", "5053", "5058")))
 
@@ -2469,8 +2482,8 @@ santaclara.data <- santaclara.data %>%
   mutate(lat = 37.40350,
          log = -121.96938)
 
-library(geosphere)
-###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO PEAKS ICE ARENA
+###CREATING VARIABLE FOR DISTANCE FROM PROPERTY TO STADIUM
+##THIS WILL THROW A WARNING MESSAGE ... BUT DON'T WORRY. IT WORKS.
 meter2mile <- 0.000621371
 santaclara.data[, distance := meter2mile * geosphere::distVincentyEllipsoid(
   cbind(Longitude, Latitude),
@@ -2544,20 +2557,152 @@ merged.data <- rbind(arlington.data,
                      rutherford.data,
                      santaclara.data)
 
+testing.merged <- merged.data %>%
+  filter(SalesPrice >= 50000 & SalesPrice <= 1000000)
 
-####################
+###NONLOGARTHMIC HISTOGRAM nonfaceted
+ggplot(data = testing.merged, aes(x = SalesPrice)) +
+  geom_histogram(fill = "#56b4e9", color = "black" ) +
+  scale_x_continuous(labels = scales::dollar_format(),
+                     breaks = scales::pretty_breaks(n = 2)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 7),
+                     labels = scales::comma,
+                     expand = c(0,0)) +
+  xlab("Sales Price") +
+  ylab("Number of Houses") +
+  labs(title = "Histogram: Sales Price vs. # of Houses") +
+  theme_fivethirtyeight()
+
+
+
+ggsave("non-log-unfaceted.png", dpi = 400)
+
+###NONLOGARTHMIC HISTOGRAM faceted
+ggplot(data = testing.merged, aes(x = SalesPrice)) +
+  geom_histogram(fill = "#56b4e9", color = "black" ) +
+  scale_x_continuous(labels = scales::dollar_format(),
+                     breaks = scales::pretty_breaks(n = 2)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 7),
+                     labels = scales::comma,
+                     expand = c(0,0)) +
+  xlab("Sales Price") +
+  ylab("Number of Houses") +
+  labs(title = "Histogram: Sales Price vs. # of Houses") +
+  facet_wrap(~urban_name) +
+  theme_fivethirtyeight() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(1.5, "lines"),
+    strip.text.x = element_text(size = 8))
+
+
+###LOGARTHMIC HISTOGRAM faceted
+ggplot(data = testing.merged, aes(x = log(SalesPrice))) +
+  geom_histogram(aes(y = ..density..), fill = "#56b4e9", color = "black") +
+  geom_density(alpha = .35, fill = "#e99856") +
+  scale_x_continuous(trans='log10',
+                     breaks=trans_breaks('log10', function(x) 10^x),
+                     labels=trans_format('log10', math_format(10^.x))) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 7),
+                     labels = scales::comma,
+                     expand = c(0,0)) +
+  xlab("Sales Price") +
+  ylab("Number of Houses") +
+  labs(title = "Logarithmic Histogram: Sales Price vs. # of Houses") +
+  facet_wrap(~urban_name) +
+  theme_fivethirtyeight() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(1.5, "lines"),
+    strip.text.x = element_text(size = 8))
+
+ggsave("log-faceted.png", dpi = 400)
+
+###LOGARTHMIC HISTOGRAM nonfaceted
+ggplot(data = testing.merged, aes(x = log(SalesPrice))) +
+  geom_histogram(aes(y = ..density..), fill = "#56b4e9", color = "black") +
+  geom_density(alpha = .35, fill = "#e99856") +
+  scale_x_continuous(trans='log10',
+                     breaks=trans_breaks('log10', function(x) 10^x),
+                     labels=trans_format('log10', math_format(10^.x))) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 7),
+                     labels = scales::comma,
+                     expand = c(0,0)) +
+  xlab("Sales Price") +
+  ylab("Number of Houses") +
+  labs(title = "Logarithmic Histogram: Sales Price vs. # of Houses") +
+  theme_fivethirtyeight()
+
+ggsave("log-unfaceted.png", dpi = 400)
+
+
+###################
 ####################
 ## CONSTRUCTING DID MODEL
 ####################
 ####################
 
+###COMBINED GROUP MODEL
 models <- merged.data %>%
   group_by(urban_name) %>%
   summarise(mod = list(lm(SalesPrice ~ distance_ord * year_ord)))
 
-models$mod
+###INDIVIDUAL MODELS
+atlanta.model <- lm(log(SalesPrice) ~ relevel(distance_ord, ref = "Short") * year_ord, data = atlanta.data)
+atlanta.model
 
-####################
+minneapolis.model <- lm(log(SalesPrice) ~ relevel(distance_ord, ref = "Short") * year_ord, data = minneapolis.data)
+minneapolis.model
+
+paradise.model <- lm(log(SalesPrice) ~ relevel(distance_ord, ref = "Short") * year_ord, data = paradise.data)
+paradise.model
+
+rutherford.model <- lm(log(SalesPrice) ~ relevel(distance_ord, ref = "Short") * year_ord, data = rutherford.data)
+rutherford.model
+
+santaclara.model <- lm(log(SalesPrice) ~ relevel(distance_ord, ref = "Short") * year_ord, data = santaclara.data)
+santaclara.model
+
+#################
+##MEANS CENTERING THE REGRESSION MODEL ... STILL DECIDING ON THIS
+#################
+
+v.center <- c("TotalBedrooms", "SqFt", "age", "TotalCalculatedBath")
+
+meanCenter(model, centerOnlyInteractors = TRUE, centerDV = FALSE,
+           standardize = TRUE, terms = v.center)
+
+#################
+##MQ-Q Plot for Distribution Checking
+#################
+
+ggplot(data = merged.data, aes(sample = log10(SalesPrice^(1/3)))) +
+  stat_qq_line() +
+  stat_qq_point() +
+  stat_qq_band(alpha=0.5) +
+  labs(x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 4)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(title = "Q-Q Plots",
+       subtitle = "Fat Tail Distributions") +
+  theme(
+    plot.background = element_rect(fill = "#f0f0f0", color = NA),
+    panel.background = element_rect(fill = "#f0f0f0", color = NA),
+    panel.grid.major =  element_line(color = "#d0d0d0"),
+    panel.border = element_blank(),
+    text = element_text(family = "Chivo"),
+    axis.text = element_text(face = "bold", color = "black", size = 13),
+    axis.title = element_text(face = "bold", size = rel(1.33)),
+    axis.title.x = element_text(margin = margin(0.5, 0, 0, 0, unit = "cm")),
+    axis.title.y = element_text(margin = margin(0, 0.5, 0, 0, unit = "cm"), angle =90),
+    plot.title.position = "plot",
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 16, hjust = 0),
+    plot.caption = element_text(size = 10, hjust = 1),
+    axis.ticks = element_blank()) +
+  facet_wrap(~urban_name)
+
+###################
 ####################
 ## VISUALIZATIONS
 ####################
@@ -2585,7 +2730,7 @@ plot_tiltedmaps(map_list,
 ###
 ##ARLINGTON HEIGHTS CLUSTER MAP
 ###
-arlington.test <- st_as_sf(arlington.test)  ##NEED TO TRANSFORM DATA.FRAME TO SF
+arlington.test <- st_as_sf(arlington.heights)  ##NEED TO TRANSFORM DATA.FRAME TO SF
 
 ggplot() +
   geom_sf(data = layer::tilt_map(arlington.test), 
@@ -2786,8 +2931,38 @@ ggsave("passaic-bounded.png", dpi = 400)
 
 
 #########
+##ISOMAPPING DISTANCE FOR ARLINGTING HEIGHTS
+#########
+
+arlington.race <- c("-88.010102466048", "42.093383772976495")
+
+isochrones <- mb_isochrone(arlington.race, 
+                           distance = c(8046,
+                                        16093,
+                                        24140,
+                                        32186))
+
+mapdeck(style = mapdeck_style("streets"),
+        location = c("-88.010102466048", "42.093383772976495"),
+        zoom = 8.5) %>%
+  add_polygon(data = isochrones,
+              fill_colour = "distance",
+              fill_opacity = 0.4,
+              legend = FALSE,
+              update_view = FALSE)
+
+meters2miles <- c(5,10,15,20)
+
+
+#########
 ##GT TABLE CODING
 #########
+
+merged.data %>%
+  summarize(max = max(SalesPrice))
+
+cleaned.merged <- merged.data %>%
+  filter(SalesPrice >= 50000 & SalesPrice <= 1000000)
 
 testing.sparklines <- cleaned.merged %>%
   dplyr::group_by(urban_name) %>%
