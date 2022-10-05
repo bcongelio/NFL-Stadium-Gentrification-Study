@@ -13,5 +13,28 @@ The implications of this proposed model for practitioners in the sport industry 
 
 ### My Workflow
 
-![arlington-heights-map](https://user-images.githubusercontent.com/57458963/152689823-b059f1b4-bf95-4530-8e94-bd97e063bb67.png)
+![workflow](https://user-images.githubusercontent.com/57458963/194142228-1ee8e0f0-d2e7-4101-9fe9-820d8efa7697.PNG)
 
+### Results of Principal Component Analysis
+
+![pca-results](https://user-images.githubusercontent.com/57458963/194142434-5bed6f42-4f65-43f9-bf42-6bd60e1dcba7.PNG)
+
+### PCA Feature Importance
+
+![pca-feature-importance](https://user-images.githubusercontent.com/57458963/194142604-e8aa7755-d18c-4f0e-b4b4-3bdbfe73a3dc.PNG)
+
+### Results of Clustering Process (for Minneapolis)
+
+![clustering-results](https://user-images.githubusercontent.com/57458963/194142880-1e291b90-4310-4f8d-8a85-778ef64c316e.PNG)
+
+### Q-Q Plot: Sampled Quantiles vs. Theoretical Quantiles
+
+![qqplot](https://user-images.githubusercontent.com/57458963/194143079-5a6fe177-2ce4-4325-9df1-0b06ffcd499d.PNG)
+
+### Difference-in-Differences Regression Results
+
+![did-results](https://user-images.githubusercontent.com/57458963/194143237-af0b059c-eaf4-4738-9edf-cb5b0a83b797.PNG)
+
+### Visualized Estimation Of House Price Increases in Arlington Heights
+
+![mapped-results](https://user-images.githubusercontent.com/57458963/194143403-efebb796-d324-45db-b3af-3275e1f3809c.PNG)
